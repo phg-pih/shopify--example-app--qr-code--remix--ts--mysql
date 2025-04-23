@@ -15,6 +15,7 @@ datasource db {
   url      = env("DB_URL")
 }
 
+// Session Model
 model Session {
   id            String    @id
   shop          String
@@ -31,4 +32,20 @@ model Session {
   locale        String?
   collaborator  Boolean?  @default(false)
   emailVerified Boolean?  @default(false)
+}
+
+// QR Code Model
+model QRCode {
+  id               Int      @id @default(autoincrement())
+  title            String
+  shop             String
+  productId        String
+  productHandle    String
+  productVariantId String
+  destination      String
+  scans            Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([productId, productVariantId])
 }
