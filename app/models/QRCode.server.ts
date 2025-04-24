@@ -154,14 +154,12 @@ export function validateQRCode(data: Partial<QRCode>): QRCodeValidationErrors | 
   return undefined;
 }
 
-export async function createQRCode(data: Partial<QRCode>): Promise<number> {
-  const qrCode = await db.qRCode.create({
+export async function createQRCode(data: Partial<QRCode>): Promise<QRCode> {
+  return await db.qRCode.create({
     data: {
       ...data,
     } as any, // Type casting due to partial data
   });
-
-  return qrCode.id;
 }
 
 export async function updateQRCode(id: number, data: Partial<QRCode>): Promise<QRCode> {
