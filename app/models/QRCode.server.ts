@@ -6,7 +6,7 @@ import db from "../db.server";
 export interface QRCode {
   id: number;
   shop: string;
-  destination: "product" | "cart";
+  destination: string;
   productId: string;
   productHandle: string;
   productVariantId: string;
@@ -164,9 +164,9 @@ export async function createQRCode(data: Partial<QRCode>): Promise<number> {
   return qrCode.id;
 }
 
-export async function updateQRCode(id: number, data: Partial<QRCode>): Promise<void> {
-  await db.qRCode.update({
-    where: { id },
+export async function updateQRCode(id: number, data: Partial<QRCode>): Promise<QRCode> {
+  return await db.qRCode.update({
+    where: {id},
     data: {
       ...data,
     },

@@ -1,23 +1,51 @@
-import { useLoaderData, Link } from "@remix-run/react";
+import { useState } from "react";
+import { useActionData, useLoaderData, useNavigation, useNavigate, useSubmit } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { getQRCode, deleteQRCode } from "../models/QRCode.server";
 import {
-  Button,
+  getQRCode,
+  deleteQRCode,
+  type QRCode,
+  updateQRCode,
+  validateQRCode
+} from "../models/QRCode.server";
+import {
   Card,
+  Bleed,
+  Button,
+  ChoiceList,
+  Divider,
+  EmptyState,
+  InlineStack,
+  InlineError,
   Layout,
   Page,
   Text,
+  TextField,
+  Thumbnail,
   BlockStack,
-  Divider,
-  InlineStack
+  PageActions,
 } from "@shopify/polaris";
+
+interface QRCodeFormState {
+  id?: number;
+  title: string;
+  productId?: string;
+  productVariantId?: string;
+  productHandle?: string;
+  productTitle?: string;
+  productImage?: string;
+  productAlt?: string | null;
+  destination: "product" | "cart";
+  destinationUrl?: string;
+  image?: string;
+}
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { admin } = await authenticate.admin(request);
-  const id = parseFloat(params.id as string);
 
+  const id = parseFloat(params.id as string);
   const qrCode = await getQRCode(id, admin.graphql);
 
   if (!qrCode) {
@@ -28,130 +56,243 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  // const { admin } = await authenticate.admin(request);
   const id = parseFloat(params.id as string);
 
   const formData = await request.formData();
   const action = formData.get("action");
+
+  const { session } = await authenticate.admin(request);
+  const { shop } = session;
+  const data = {
+    ...Object.fromEntries(formData),
+    shop
+  };
 
   if (action === "delete") {
     await deleteQRCode(id);
     return redirect("/app");
   }
 
-  return null;
+  const errors = validateQRCode(data);
+  if (errors) {
+    return json({ errors }, { status: 422 });
+  }
+
+  const qrCode = await updateQRCode(id, {
+    ...data,
+  } as Partial<QRCode>);
+
+  return redirect(`/app/qrcodes/${qrCode.id}`);
 }
 
 export default function QRCodeDetails() {
+  const actionData = useActionData<typeof action>();
+  const errors = (actionData?.errors || {}) as QRCodeFormState;
+
   const { qrCode } = useLoaderData<typeof loader>();
+
+  const [formState, setFormState] = useState<QRCodeFormState>(qrCode as QRCodeFormState);
+  const [cleanFormState, setCleanFormState] = useState<QRCodeFormState>(qrCode as QRCodeFormState);
+
+  const isDirty = JSON.stringify(formState) !== JSON.stringify(cleanFormState);
+  const nav = useNavigation();
+  const navigate = useNavigate();
+  const isSaving = nav.state === "submitting" && nav.formData?.get("action") !== "delete";
+  const isDeleting = nav.state === "submitting" && nav.formData?.get("action") === "delete";
+
+  async function selectProduct() {
+    const products = await window.shopify.resourcePicker({
+      type: "product",
+      action: "select", // customized action verb, either 'select' or 'add',
+    });
+
+    if (products) {
+      const product = products[0] as {
+        images: Array<{altText?: string, originalSrc: string}>;
+        id: string;
+        variants: Array<{id: string}>;
+        title: string;
+        handle: string;
+      };
+      const { images, id, variants, title, handle } = product;
+
+      setFormState({
+        ...formState,
+        productId: id,
+        productVariantId: variants[0].id,
+        productTitle: title,
+        productHandle: handle,
+        productAlt: images[0]?.altText || null,
+        productImage: images[0]?.originalSrc,
+      });
+    }
+  }
+
+  const submit = useSubmit();
+  async function handleSave() {
+    const data = {
+      title: formState.title,
+      productId: formState.productId || "",
+      productVariantId: formState.productVariantId || "",
+      productHandle: formState.productHandle || "",
+      destination: formState.destination,
+    };
+
+    setCleanFormState({ ...formState });
+    submit(data, { method: "post" });
+  }
 
   return (
     <Page>
-      <BlockStack gap="500">
-        <InlineStack align="space-between">
-          <Text variant="headingLg" as="h2">QR Code Details</Text>
-          <Button url={`/app/qrcodes/${qrCode.id}/edit`} variant="primary">Edit</Button>
-          <Button url={`/app`} variant="secondary">Back to List</Button>
-        </InlineStack>
-
-        <Layout>
-          <Layout.Section variant="oneHalf">
+      <ui-title-bar title={qrCode.id ? "Edit QR code" : "Create new QR code"}>
+        <button variant="breadcrumb" onClick={() => navigate("/app")}>
+          QR codes
+        </button>
+      </ui-title-bar>
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="500">
             <Card>
               <BlockStack gap="500">
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">QR Code</Text>
-                  <img
-                    src={qrCode.image}
-                    alt={`QR Code for ${qrCode.title}`}
-                    width={300}
-                  />
-                  <Link to={qrCode.destinationUrl} target="_blank">View destination</Link>
-                </BlockStack>
-
-                <Divider />
-
-                <BlockStack gap="200">
-                  <Text as="h3" variant="headingMd">Scan Statistics</Text>
-                  <Text as="p" variant="bodyLg">{qrCode.scans} total scans</Text>
-                </BlockStack>
-
-                <Divider />
-
-                <BlockStack gap="200">
-                  <InlineStack align="center" gap="300">
-                    <Button variant="plain" onClick={() => {
-                      if (confirm("Are you sure you want to delete this QR code?")) {
-                        const form = document.createElement("form");
-                        form.method = "POST";
-                        const input = document.createElement("input");
-                        input.type = "hidden";
-                        input.name = "action";
-                        input.value = "delete";
-                        form.appendChild(input);
-                        document.body.appendChild(form);
-                        form.submit();
-                        document.body.removeChild(form);
-                      }
-                    }}>
-                      Delete QR code
-                    </Button>
-                  </InlineStack>
-                </BlockStack>
+                <Text as={"h2"} variant="headingLg">
+                  Title
+                </Text>
+                <TextField
+                  id="title"
+                  helpText="Only store staff can see this title"
+                  label="title"
+                  labelHidden
+                  autoComplete="off"
+                  value={formState.title}
+                  onChange={(title) => setFormState({ ...formState, title })}
+                  error={errors.title}
+                />
               </BlockStack>
             </Card>
-          </Layout.Section>
-
-          <Layout.Section variant="oneHalf">
             <Card>
               <BlockStack gap="500">
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">Title</Text>
-                  <Text as="p" variant="bodyMd">{qrCode.title}</Text>
-                </BlockStack>
-
-                <Divider />
-
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">Product</Text>
-                  {qrCode.productDeleted ? (
-                    <InlineStack gap="300">
-                      {/*<Icon source={DiamondAlertMajor} />*/}
-                      <Text as="p" variant="bodyMd" >
-                        Product has been deleted
-                      </Text>
-                    </InlineStack>
-                  ) : (
-                    <InlineStack gap="300">
-                      {qrCode.productImage ? (
-                        <img
-                          src={qrCode.productImage}
-                          alt={qrCode.productAlt || ""}
-                          width={60}
-                          height={60}
-                        />
-                      ) : (
-                        <Text as="h2">test</Text>
-                      )}
-                      <Text as="p" variant="bodyMd">{qrCode.productTitle}</Text>
-                    </InlineStack>
-                  )}
-                </BlockStack>
-
-                <Divider />
-
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">Destination</Text>
-                  <Text as="p" variant="bodyMd">
-                    {qrCode.destination === "product"
-                      ? "Product page"
-                      : "Checkout with product in cart"}
+                <InlineStack align="space-between">
+                  <Text as={"h2"} variant="headingLg">
+                    Product
                   </Text>
-                </BlockStack>
+                  {formState.productId ? (
+                    <Button variant="plain" onClick={selectProduct}>
+                      Change product
+                    </Button>
+                  ) : null}
+                </InlineStack>
+                {formState.productId ? (
+                  <InlineStack blockAlign="center" gap="500">
+                    <Thumbnail
+                      source={formState.productImage ?? "#"}
+                      alt={formState.productAlt ?? ""}
+                    />
+                    <Text as="span" variant="headingMd" fontWeight="semibold">
+                      {formState.productTitle}
+                    </Text>
+                  </InlineStack>
+                ) : (
+                  <BlockStack gap="200">
+                    <Button onClick={selectProduct} id="select-product">
+                      Select product
+                    </Button>
+                    {errors.productId ? (
+                      <InlineError
+                        message={errors.productId}
+                        fieldID="myFieldID"
+                      />
+                    ) : null}
+                  </BlockStack>
+                )}
+                <Bleed marginInlineStart="200" marginInlineEnd="200">
+                  <Divider />
+                </Bleed>
+                <InlineStack gap="500" align="space-between" blockAlign="start">
+                  <ChoiceList
+                    title="Scan destination"
+                    choices={[
+                      { label: "Link to product page", value: "product" },
+                      {
+                        label: "Link to checkout page with product in the cart",
+                        value: "cart",
+                      },
+                    ]}
+                    selected={[formState.destination]}
+                    onChange={(destination) =>
+                      setFormState({
+                        ...formState,
+                        destination: (destination[0] as "product" | "cart") ?? "product",
+                      })
+                    }
+                    error={errors.destination}
+                  />
+                  {qrCode.destinationUrl ? (
+                    <Button
+                      variant="plain"
+                      url={qrCode.destinationUrl}
+                      target="_blank"
+                    >
+                      Go to destination URL
+                    </Button>
+                  ) : null}
+                </InlineStack>
               </BlockStack>
             </Card>
-          </Layout.Section>
-        </Layout>
-      </BlockStack>
+          </BlockStack>
+        </Layout.Section>
+        <Layout.Section variant="oneThird">
+          <Card>
+            <Text as={"h2"} variant="headingLg">
+              QR code
+            </Text>
+            {qrCode ? (
+              <EmptyState image={qrCode.image} imageContained={true} />
+            ) : (
+              <EmptyState image="">
+                Your QR code will appear here after you save
+              </EmptyState>
+            )}
+            <BlockStack gap="300">
+              <Button
+                disabled={!qrCode?.image}
+                url={qrCode?.image}
+                download
+                variant="primary"
+              >
+                Download
+              </Button>
+              <Button
+                disabled={!qrCode.id}
+                url={`/qrcodes/${qrCode.id}`}
+                target="_blank"
+              >
+                Go to public URL
+              </Button>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+        <Layout.Section>
+          <PageActions
+            secondaryActions={[
+              {
+                content: "Delete",
+                loading: isDeleting,
+                disabled: !qrCode.id || !qrCode || isSaving || isDeleting,
+                destructive: true,
+                outline: true,
+                onAction: () =>
+                  submit({ action: "delete" }, { method: "post" }),
+              },
+            ]}
+            primaryAction={{
+              content: "Save",
+              loading: isSaving,
+              disabled: !isDirty || isSaving || isDeleting,
+              onAction: handleSave,
+            }}
+          />
+        </Layout.Section>
+      </Layout>
     </Page>
   );
 }
