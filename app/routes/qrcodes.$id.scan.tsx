@@ -8,7 +8,7 @@ import type {QRCode} from "../models/QRCode.server";
 export async function loader({ params }: LoaderFunctionArgs) {
   invariant(params.id, "Could not find QR code destination");
 
-  const id = parseFloat(params.id);
+  const id = Number(params.id);
 
   const qrCode = await db.qRCode.findFirst({ where: { id } });
 

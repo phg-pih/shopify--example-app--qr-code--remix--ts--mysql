@@ -45,7 +45,7 @@ interface QRCodeFormState {
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { admin } = await authenticate.admin(request);
 
-  const id = parseFloat(params.id as string);
+  const id = Number(params.id as string);
   const qrCode = await getQRCode(id, admin.graphql);
 
   if (!qrCode) {
@@ -56,7 +56,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const id = parseFloat(params.id as string);
+  const id = Number(params.id as string);
 
   const formData = await request.formData();
   const action = formData.get("action");
